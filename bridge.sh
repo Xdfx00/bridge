@@ -31,9 +31,9 @@ read -p "Enter the gateway (e.g., 192.168.1.1): " GATE
 if ! command -v ipcalc >/dev/null; then
     echo -e "${YELLOW}[INFO] ipcalc not found. Attempting to install...${NC}"
     if grep -qi 'ubuntu' /etc/os-release; then
-        apt update -y && apt install -y ipcalc || { echo -e "${RED}[ERROR] Failed to install ipcalc on Ubuntu.${NC}"; exit 1; }
-    elif grep -qi 'almalinux' /etc/os-release; then
-        dnf update -y && dnf install -y ipcalc || { echo -e "${RED}[ERROR] Failed to install ipcalc on AlmaLinux.${NC}"; exit 1; }
+        apt-get update -y >/dev/null 2>&1 && apt-get install -y ipcalc >/dev/null 2>&1 || { echo -e "${RED}[ERROR] Failed to install ipcalc on Ubuntu.${NC}"; exit 1; }
+    elif [[ "$ID" == "almalinux" || "$ID" == "rocky" || "$ID" == "centos" ]]; then
+        dnf install -y ipcalc >/dev/null 2>&1 || { echo -e "${RED}[ERROR] Failed to install ipcalc on AlmaLinux.${NC}"; exit 1; }
     else
         echo -e "${RED}[ERROR] Unsupported OS. Please install ipcalc manually.${NC}"
         exit 1
@@ -92,7 +92,7 @@ setup_bridge_rhel() {
     nmcli connection add type bridge con-name viifbr0 ifname viifbr0 autoconnect yes
     nmcli connection modify viifbr0 ipv4.addresses $IP/$CIDR_2 ipv4.gateway $GATE ipv4.dns '8.8.8.8'  ipv4.method manual
     nmcli connection modify "$IFACE" master viifbr0
-    nmc4li connection modify viifbr0 connection.autoconnect-slaves 1
+    nmcli connection modify viifbr0 connection.autoconnect-slaves 1
     nmcli connection up viifbr0
     nmcli connection up "$IFACE"
     echo "Bridge $BRIDGE_NAME configured via nmcli."
@@ -105,10 +105,10 @@ setup_bridge_rhel() {
 if [[ "$ID" == "ubuntu" ]]; then
     echo -e "${BLUE}[INFO] Ubuntu detected.${NC}"
     setup_bridge_ubuntu
-elif [[ "$ID" == "almalinux" || "$ID" == "rocky" || "$VARIANT" == "CentOS Stream" ]]; then
-    echo -e "${BLUE}[INFO] AlmaLinux detected.${NC}"
+elif [[ "$ID" == "almalinux" || "$ID" == "rocky" || "$ID" == "centos" ]]; then
+    echo -e "${BLUE}[INFO] RHEL-based distro detected.${NC}"
     setup_bridge_rhel
 else
-    echo -e "${RED}[ERROR] Unsupported OS. This script supports only Ubuntu and AlmaLinux.${NC}"
+    echo -e "${RED}[ERROR] Unsupported OS. This script supports only Ubuntu, AlmaLinux, Rockylinux, Centos stream.${NC}"
     exit 1
 fi
