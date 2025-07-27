@@ -2,7 +2,7 @@
 
 #
 # Author: Aman Shaikh
-# Version: 1.1
+# Version: 1.2
 # Description: Interactive script to configure a Linux bridge on Ubuntu (Netplan)
 #              or AlmaLinux (nmcli), with ipcalc check and color-coded output.
 
