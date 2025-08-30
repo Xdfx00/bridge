@@ -2,7 +2,7 @@
 
 #
 # Author: Aman Shaikh
-# Version: 1.2
+# Version: 2.0
 # Description: Interactive script to configure a Linux bridge on Ubuntu (Netplan)
 #              or AlmaLinux (nmcli), with ipcalc check and color-coded output.
 
@@ -22,10 +22,10 @@ set -e
 
 # Prompt user for network configuration
 echo -e "${BLUE}--- Linux Bridge Configuration ---${NC}"
-read -p "Enter the name of the physical interface to bridge (e.g., eth0): " IFACE
+read -p "Enter the name of the physical interface to bridge (e.g., eth0): " NIC
 read -p "Enter the IP address you wish to assign to the bridge (e.g., 192.168.1.100): " IP
-read -p "Enter the netmask (e.g., 255.255.255.0 or /24): " NETMASK
-read -p "Enter the gateway (e.g., 192.168.1.1): " GATE
+read -p "Enter the netmask (e.g., 255.255.255.0): " NETMASK
+read -p "Enter the gateway (e.g., 192.168.1.1): " GATEWAY
 
 # Check if ipcalc is installed
 if ! command -v ipcalc >/dev/null; then
@@ -41,8 +41,32 @@ if ! command -v ipcalc >/dev/null; then
 fi
 
 
+# Check if interface exists:
+if ! ip link show "$NIC" >/dev/null 2>&1; then
+    echo -e "${RED}[ERROR] Interface $NIC not found.${NC}"
+    exit 1
+fi
+
+# Checking if the server provider Hetzner or OVH
+#ISP=$(curl -sS ipinfo.io/$IP | grep -Eio "hetzner|OVH")
+#echo -e "${GREEN}[INFO] Detected $ISP.."
+DATA=$(curl -sS ipinfo.io/$IP)
+if echo "$DATA" | grep -q '"bogon": true'; then
+    echo -e "${YELLOW}[INFO] Private IP detected. Skipping ISP detection.${NC}"
+    ISP="private"
+else
+    ISP=$(echo "$DATA" | grep -Eio "hetzner|ovh")
+fi
+
+echo -e "${GREEN}[INFO] Detected ISP: ${ISP:-Unknown}.${NC}"
+
 # Convert Netmask to CIDR
-CIDR=$(ipcalc ipcalc $IP $NETMASK | awk '/Netmask/ {print $4}')
+CIDR=$(ipcalc $IP $NETMASK | awk '/Netmask/ {print $4}')
+
+# Fetecting mac address 
+MAC=$(cat /sys/class/net/eth0/address)
+#MAC=$(ifconfig $IFACE | grep ether | awk '{print $2}')
+
 
 
 ###########################################
@@ -51,51 +75,83 @@ CIDR=$(ipcalc ipcalc $IP $NETMASK | awk '/Netmask/ {print $4}')
 setup_bridge_ubuntu() {
 echo -e "${BLUE}[INFO] Starting Netplan bridge configuration...${NC}"
 
-# considering the server don't have multiples .yamls 
+# considering the server don't have multiples .yamls file
 NETPLAN=$(ls /etc/netplan/ | head -n1)
 
 # create backup of .yaml
 cp /etc/netplan/$NETPLAN /etc/netplan/$NETPLAN-bak
 
-# Fetecting mac address 
-MAC=$(ifconfig $IFACE | grep ether | awk '{print $2}')
 
 tee /etc/netplan/$NETPLAN <<EOF
 network:
   version: 2
   renderer: networkd
   ethernets:
-    $IFACE:
+    $NIC:
       dhcp4: no
   bridges:
     viifbr0:
       addresses: 
         - $IP/$CIDR
-      interfaces: [ $IFACE ]
-      gateway4: $GATE
+      interfaces: [ $NIC ]
+      gateway4: $GATEWAY
       macaddress: $MAC
       nameservers:
          addresses:
            - 8.8.8.8
            - 8.8.4.4
 EOF
-    
+
+    netplan generate
     netplan apply
-    echo "Bridge configured via Netplan."
+    echo -e "${GREEN}[INFO] Applied OVH/Hetzner Netplan config.${NC}"
+}
+
+# OVH/Hetzner netplan
+ovh_hetzner_netplan() {
+tee /etc/netplan/$NETPLAN <<EOF
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    $NIC:
+      dhcp4: no
+  bridges:
+    viifbr0:
+      addresses: 
+        - $IP/$CIDR
+      interfaces: [ $IFACE ]
+      routes:
+        - on-link: true
+          to: 0.0.0.0/0
+          via: $GATEWAY
+      macaddress: $MAC
+      nameservers:
+         addresses:
+           - 8.8.8.8
+           - 8.8.4.4
+EOF
+
+    netplan generate
+    netplan apply
+    echo -e "${GREEN}[INFO] Applied OVH/Hetzner Netplan config.${NC}"
 }
 
 # Redhat based linux OS setup
 setup_bridge_rhel() {
 
+    CON_NAME=$(nmcli -t -f NAME,DEVICE connection show | grep ":$NIC" | cut -d: -f1)
+
     CIDR_2=$(ipcalc -p $IP $NETMASK | awk -F= {'print $2'})
 
     nmcli connection add type bridge con-name viifbr0 ifname viifbr0 autoconnect yes
-    nmcli connection modify viifbr0 ipv4.addresses $IP/$CIDR_2 ipv4.gateway $GATE ipv4.dns '8.8.8.8'  ipv4.method manual
-    nmcli connection modify "$IFACE" master viifbr0
+    nmcli connection modify viifbr0 ipv4.addresses $IP/$CIDR ipv4.gateway $GATEWAY ipv4.dns '8.8.8.8'  ipv4.method manual
+    nmcli connection modify "$CON_NAME" master viifbr0
     nmcli connection modify viifbr0 connection.autoconnect-slaves 1
     nmcli connection up viifbr0
-    nmcli connection up "$IFACE"
-    echo "Bridge $BRIDGE_NAME configured via nmcli."
+    nmcli connection up "$CON_NAME"
+
+    echo -e "${GREEN}[INFO] Bridge created via nmcli config.${NC}"
 }
 
 
@@ -105,6 +161,9 @@ setup_bridge_rhel() {
 if [[ "$ID" == "ubuntu" ]]; then
     echo -e "${BLUE}[INFO] Ubuntu detected.${NC}"
     setup_bridge_ubuntu
+  if [[ "$ISP" =~ ^(hetzner|ovh)$ ]]; then
+    ovh_hetzner_netplan
+    fi
 elif [[ "$ID" == "almalinux" || "$ID" == "rocky" || "$ID" == "centos" ]]; then
     echo -e "${BLUE}[INFO] RHEL-based distro detected.${NC}"
     setup_bridge_rhel
