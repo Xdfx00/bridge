@@ -45,7 +45,6 @@ fi
 IPV6_ADDR=""
 IPV6_GW=""
 
-
 IPV6=$(ip -6 addr show dev $NIC  scope global | sed -e '1d;3d' | awk '{print $2; exit}')
  [[ -n "$IPV6" ]] && IPV6_ADDR=$IPV6
 
@@ -74,8 +73,8 @@ echo -e "${GREEN}[INFO] Detected ISP: ${ISP:-Unknown}.${NC}"
 # Convert Netmask to CIDR
 CIDR=$(ipcalc $IP $NETMASK | awk '/Netmask/ {print $4}')
 
-# Fetecting mac address 
-MAC=$(cat /sys/class/net/eth0/address)
+# Fetecting mac address
+MAC=$(cat /sys/class/net/$NIC/address)
 #MAC=$(ifconfig $IFACE | grep ether | awk '{print $2}')
 
 
@@ -102,9 +101,9 @@ network:
       dhcp4: no
   bridges:
     viifbr0
-      addresses: 
+      addresses:
         - $IP/$CIDR
-        - ${IPV6_ADDR:+-$IPV6_ADDR}
+        - ${IPV6_ADDR:+$IPV6_ADDR}
       interfaces: [ $NIC ]
       gateway4: $GATEWAY
       ${IPV6_GW:+gateway6: $IPV6_GW}
@@ -131,10 +130,10 @@ network:
       dhcp4: no
   bridges:
     viifbr0:
-     addresses: 
+     addresses:
         - $IP/$CIDR
-        - ${IPV6_ADDR:+-$IPV6_ADDR}
-      interfaces: [ $IFACE ]
+        - ${IPV6_ADDR:+$IPV6_ADDR}
+      interfaces: [ $NIC ]
       routes:
         - on-link: true
           to: 0.0.0.0/0
@@ -157,7 +156,7 @@ setup_bridge_rhel() {
 
     CON_NAME=$(nmcli -t -f NAME,DEVICE connection show | grep ":$NIC" | cut -d: -f1)
 
-    CIDR_2=$(ipcalc -p $IP $NETMASK | awk -F= {'print $2'})
+    #CIDR_2=$(ipcalc -p $IP $NETMASK | awk -F= {'print $2'})
 
     nmcli connection add type bridge con-name viifbr0 ifname viifbr0 autoconnect yes
     nmcli connection modify viifbr0 ipv4.addresses $IP/$CIDR ipv4.gateway $GATEWAY ipv4.dns '8.8.8.8'  ipv4.method manual
