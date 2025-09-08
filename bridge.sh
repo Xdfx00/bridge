@@ -41,6 +41,17 @@ if ! command -v ipcalc >/dev/null; then
 fi
 
 
+# Checking IPv6
+IPV6_ADDR=""
+IPV6_GW=""
+
+
+IPV6=$(ip -6 addr show dev $NIC  scope global | sed -e '1d;3d' | awk '{print $2; exit}')
+ [[ -n "$IPV6" ]] && IPV6_ADDR=$IPV6
+
+
+IPV6_GW=$(ip -6 route | awk '/default via/ {print $3; exit}')
+
 # Check if interface exists:
 if ! ip link show "$NIC" >/dev/null 2>&1; then
     echo -e "${RED}[ERROR] Interface $NIC not found.${NC}"
@@ -90,11 +101,13 @@ network:
     $NIC:
       dhcp4: no
   bridges:
-    viifbr0:
+    viifbr0
       addresses: 
         - $IP/$CIDR
+        - ${IPV6_ADDR:+-$IPV6_ADDR}
       interfaces: [ $NIC ]
       gateway4: $GATEWAY
+      ${IPV6_GW:+gateway6: $IPV6_GW}
       macaddress: $MAC
       nameservers:
          addresses:
@@ -118,13 +131,15 @@ network:
       dhcp4: no
   bridges:
     viifbr0:
-      addresses: 
+     addresses: 
         - $IP/$CIDR
+        - ${IPV6_ADDR:+-$IPV6_ADDR}
       interfaces: [ $IFACE ]
       routes:
         - on-link: true
           to: 0.0.0.0/0
           via: $GATEWAY
+      ${IPV6_GW:+gateway6: $IPV6_GW}
       macaddress: $MAC
       nameservers:
          addresses:
@@ -146,6 +161,11 @@ setup_bridge_rhel() {
 
     nmcli connection add type bridge con-name viifbr0 ifname viifbr0 autoconnect yes
     nmcli connection modify viifbr0 ipv4.addresses $IP/$CIDR ipv4.gateway $GATEWAY ipv4.dns '8.8.8.8'  ipv4.method manual
+    if [[ -n "$IPV6_ADDR" ]]; then
+    nmcli connection modify viifbr0 ipv6.addresses "$IPV6_ADDR" ipv6.gateway "$IPV6_GW" ipv6.method manual ipv6.dns "2001:4860:4860::8888"
+else
+    nmcli connection modify viifbr0 ipv6.method ignore
+fi
     nmcli connection modify "$CON_NAME" master viifbr0
     nmcli connection modify viifbr0 connection.autoconnect-slaves 1
     nmcli connection up viifbr0
