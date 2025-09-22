@@ -2,7 +2,7 @@
 
 #
 # Author: Aman Shaikh
-# Version: 2.0
+# Version: 2.1
 # Description: Interactive script to configure a Linux bridge on Ubuntu (Netplan)
 #              or AlmaLinux (nmcli), with ipcalc check and color-coded output.
 
@@ -100,7 +100,7 @@ network:
     $NIC:
       dhcp4: no
   bridges:
-    viifbr0
+    viifbr0:
       addresses:
         - $IP/$CIDR
         - ${IPV6_ADDR:+$IPV6_ADDR}
@@ -116,7 +116,7 @@ EOF
 
     netplan generate
     netplan apply
-    echo -e "${GREEN}[INFO] Applied OVH/Hetzner Netplan config.${NC}"
+    echo -e "${GREEN}[INFO] Applied Default Netplan config.${NC}"
 }
 
 # OVH/Hetzner netplan
@@ -130,7 +130,7 @@ network:
       dhcp4: no
   bridges:
     viifbr0:
-     addresses:
+      addresses:
         - $IP/$CIDR
         - ${IPV6_ADDR:+$IPV6_ADDR}
       interfaces: [ $NIC ]
