@@ -17,8 +17,6 @@ YELLOW="\033[1;33m"
 BLUE="\033[1;34m"
 NC="\033[0m" # No Color
 
-set -e
-
 
 # Prompt user for network configuration
 echo -e "${BLUE}--- Linux Bridge Configuration ---${NC}"
@@ -103,7 +101,7 @@ network:
     viifbr0:
       addresses:
         - $IP/$CIDR
-        - ${IPV6_ADDR:+$IPV6_ADDR}
+        ${IPV6_ADDR:+- $IPV6_ADDR}
       interfaces: [ $NIC ]
       gateway4: $GATEWAY
       ${IPV6_GW:+gateway6: $IPV6_GW}
@@ -132,7 +130,7 @@ network:
     viifbr0:
       addresses:
         - $IP/$CIDR
-        - ${IPV6_ADDR:+$IPV6_ADDR}
+        ${IPV6_ADDR:+- $IPV6_ADDR}
       interfaces: [ $NIC ]
       routes:
         - on-link: true
