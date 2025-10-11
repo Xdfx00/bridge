@@ -20,10 +20,6 @@ NC="\033[0m" # No Color
 
 # Prompt user for network configuration
 echo -e "${BLUE}--- Linux Bridge Configuration ---${NC}"
-#read -p "Enter the name of the physical interface to bridge (e.g., eth0): " NIC
-#read -p "Enter the IP address you wish to assign to the bridge (e.g., 192.168.1.100): " IP
-#read -p "Enter the netmask (e.g., 255.255.255.0): " NETMASK
-#read -p "Enter the gateway (e.g., 192.168.1.1): " GATEWAY
 
 # Detect Ips info directly from server 
 IFACE=$(ip route show default | awk '{print $5}')
@@ -31,8 +27,6 @@ IFACE=$(ip route show default | awk '{print $5}')
 IP_NET=$(ip -4 addr show $IFACE | grep inet | grep -v '127.0.0.1' | awk '{print $2}')
 
 IP=$(ip -4 addr show $IFACE | grep inet | grep -v '127.0.0.1' | awk '{print $2}' | cut -d'/' -f1)
-
-#NETMASK=$(ifconfig $IFACE | grep netmask | awk '{print $4}')
 
 GW=$(ip route show default | awk '{print $3}')
 
@@ -67,8 +61,6 @@ if ! ip link show "$IFACE" >/dev/null 2>&1; then
 fi
 
 # Checking if the server provider Hetzner or OVH
-#ISP=$(curl -sS ipinfo.io/$IP | grep -Eio "hetzner|OVH")
-#echo -e "${GREEN}[INFO] Detected $ISP.."
 DATA=$(curl -sS ipinfo.io/$IP)
 if echo "$DATA" | grep -q '"bogon": true'; then
     echo -e "${YELLOW}[INFO] Private IP detected. Skipping ISP detection.${NC}"
@@ -90,8 +82,6 @@ fi
 
 # Fetecting mac address
 MAC=$(cat /sys/class/net/$IFACE/address)
-#MAC=$(ifconfig $IFACE | grep ether | awk '{print $2}')
-
 
 
 ###########################################
@@ -223,8 +213,6 @@ setup_bridge_rhel() {
 
     CON_NAME=$(nmcli -t -f NAME,DEVICE connection show | grep ":$IFACE" | cut -d: -f1)
 
-    #CIDR_2=$(ipcalc -p $IP $NETMASK | awk -F= {'print $2'})
-
     nmcli connection add type bridge con-name viifbr0 ifname viifbr0 autoconnect yes
     nmcli connection modify viifbr0 ipv4.addresses $IP_NET ipv4.gateway $GW ipv4.dns '8.8.8.8'  ipv4.method manual
     if [[ -n "$IPV6_ADDR" ]]; then
@@ -241,6 +229,7 @@ fi
 }
 
 hetzner_rhel() {
+
 	CON_NAME=$(nmcli -t -f NAME,DEVICE connection show | grep ":$IFACE" | cut -d: -f1)
 
 	nmcli connection add type bridge con-name viifbr0 ifname viifbr0 autoconnect yes
