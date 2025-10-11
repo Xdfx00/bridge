@@ -30,9 +30,9 @@ IFACE=$(ip route show default | awk '{print $5}')
 
 IP_NET=$(ip -4 addr show $IFACE | grep inet | grep -v '127.0.0.1' | awk '{print $2}')
 
-IP=$(ip -4 addr show eth0 | grep inet | awk '{print $2}' | cut -d'/' -f1)
+IP=$(ip -4 addr show $IFACE | grep inet | grep -v '127.0.0.1' | awk '{print $2}' | cut -d'/' -f1)
 
-NETMASK=$(ifconfig $IFACE | grep netmask | awk '{print $4}')
+#NETMASK=$(ifconfig $IFACE | grep netmask | awk '{print $4}')
 
 GW=$(ip route show default | awk '{print $3}')
 
@@ -54,7 +54,7 @@ fi
 IPV6_ADDR=""
 IPV6_GW=""
 
-IPV6=$(ip -6 addr show dev eth0 scope global | grep -w inet6  | awk '{print $2}')
+IPV6=$(ip -6 addr show dev $IFACE scope global | grep -w inet6  | awk '{print $2}')
  [[ -n "$IPV6" ]] && IPV6_ADDR=$IPV6
 
 
@@ -62,7 +62,7 @@ IPV6_GW=$(ip -6 route | awk '/default via/ {print $3; exit}')
 
 # Check if interface exists:
 if ! ip link show "$IFACE" >/dev/null 2>&1; then
-    echo -e "${RED}[ERROR] Interface $NIC not found.${NC}"
+    echo -e "${RED}[ERROR] Interface $IFACE not found.${NC}"
     exit 1
 fi
 
@@ -79,8 +79,14 @@ fi
 
 echo -e "${GREEN}[INFO] Detected ISP: ${ISP:-Unknown}.${NC}"
 
-# Convert Netmask to CIDR
-CIDR=$(ipcalc $IP $NETMASK | awk '/Netmask/ {print $4}')
+
+# gathering correct netmask
+if [[ $ISP == "Hetzner" ]]
+then 
+	read -p "Your server is from $ISP so you need to provide the correct nastmask from hetnzer panel.! (eq.. 255.255.255.0)" NETMASK
+	CIDR=$(ipcalc $IP $NETMASK | awk '/Netmask/ {print $4}')
+fi
+
 
 # Fetecting mac address
 MAC=$(cat /sys/class/net/$IFACE/address)
@@ -129,7 +135,7 @@ EOF
 }
 
 # OVH/Hetzner netplan
-ovh_hetzner_netplan() {
+hetzner_netplan() {
 
 echo -e "${BLUE}[INFO] Starting Netplan bridge configuration...${NC}"
 
@@ -138,9 +144,6 @@ NETPLAN=$(ls /etc/netplan/ | head -n1)
 
 # create backup of .yaml
 cp /etc/netplan/$NETPLAN /etc/netplan/$NETPLAN-bak
-
-read -p "Your server is belong to $ISP so you need to mention the server netmask which is on $ISP panel" CIDR
-
 
 tee /etc/netplan/$NETPLAN <<EOF
 network:
@@ -169,8 +172,51 @@ EOF
 
     netplan generate
     netplan apply
-    echo -e "${GREEN}[INFO] Applied OVH/Hetzner Netplan config.${NC}"
+    echo -e "${GREEN}[INFO] Applied Hetzner Netplan config.${NC}"
 }
+
+
+
+ovh_netplan() {
+
+echo -e "${BLUE}[INFO] Starting Netplan bridge configuration...${NC}"
+
+# considering the server don't have multiples .yamls file
+NETPLAN=$(ls /etc/netplan/ | head -n1)
+
+# create backup of .yaml
+cp /etc/netplan/$NETPLAN /etc/netplan/$NETPLAN-bak
+
+tee /etc/netplan/$NETPLAN <<EOF
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    $IFACE:
+      dhcp4: no
+  bridges:
+    viifbr0:
+      addresses:
+        - $IP_NET
+        ${IPV6_ADDR:+- $IPV6_ADDR}
+      interfaces: [ $IFACE ]
+      routes:
+        - on-link: true
+          to: 0.0.0.0/0
+          via: $GW
+      ${IPV6_GW:+gateway6: $IPV6_GW}
+      macaddress: $MAC
+      nameservers:
+         addresses:
+           - 8.8.8.8
+           - 8.8.4.4
+EOF
+
+    netplan generate
+    netplan apply
+    echo -e "${GREEN}[INFO] Applied OVH/Hetzner Netplan config.${NC}"	
+}
+
 
 # Redhat based linux OS setup
 setup_bridge_rhel() {
@@ -194,19 +240,47 @@ fi
     echo -e "${GREEN}[INFO] Bridge created via nmcli config.${NC}"
 }
 
+hetzner_rhel() {
+	CON_NAME=$(nmcli -t -f NAME,DEVICE connection show | grep ":$IFACE" | cut -d: -f1)
+
+	nmcli connection add type bridge con-name viifbr0 ifname viifbr0 autoconnect yes
+	nmcli connection modify viifbr0 ipv4.addresses $IP/$CIDR ipv4.gateway "$GW" ipv4.dns '8.8.8.8' ipv4.method manual
+	if [[ -n "$IPV6_ADDR" ]]; then
+	nmcli connection modify viifbr0 ipv6.addresses "$IPV6_ADDR" ipv6.gateway "$IPV6_GW" ipv6.dns "2001:4868::8888" ipv6.method manual
+else
+	nmcli connection modify viifbr0 ipv6.method ignore
+	fi
+	nmcli connection modify $CON_NAME master viifbr0
+	nmcli connection modify viifbr0 connection.autoconnect-slaves 1
+	nmcli connection up viifbr0
+	nmcli connection up "$CON_NAME"
+}
+
 
 ###########################################
 # OS Detection and Setup Trigger
 ###########################################
-if [[ "$ID" == "ubuntu" ]]; then
+if [[ "$ID" == "ubuntu" ]]
+then
     echo -e "${BLUE}[INFO] Ubuntu detected.${NC}"
-    setup_bridge_ubuntu
-  if [[ "$ISP" =~ ^(hetzner|ovh)$ ]]; then
-    ovh_hetzner_netplan
-    fi
-elif [[ "$ID" == "almalinux" || "$ID" == "rocky" || "$ID" == "centos" ]]; then
+  if [[ "$ISP" == "Hetzner" ]] 
+  then
+      hetzner_netplan
+    elif [[ "$ISP" == OVH ]]
+    then
+	    ovh_netplan
+    else
+	    setup_bridge_ubuntu
+  fi
+elif [[ "$ID" == "almalinux" || "$ID" == "rocky" || "$ID" == "centos" ]]
+then
     echo -e "${BLUE}[INFO] RHEL-based distro detected.${NC}"
-    setup_bridge_rhel
+    if [[ $ISP == "Hetzner" ]]
+    then
+	    hetzner_rhel
+    else
+	    setup_bridge_rhel
+    fi
 else
     echo -e "${RED}[ERROR] Unsupported OS. This script supports only Ubuntu, AlmaLinux, Rockylinux, Centos stream.${NC}"
     exit 1
