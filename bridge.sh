@@ -20,10 +20,21 @@ NC="\033[0m" # No Color
 
 # Prompt user for network configuration
 echo -e "${BLUE}--- Linux Bridge Configuration ---${NC}"
-read -p "Enter the name of the physical interface to bridge (e.g., eth0): " NIC
-read -p "Enter the IP address you wish to assign to the bridge (e.g., 192.168.1.100): " IP
-read -p "Enter the netmask (e.g., 255.255.255.0): " NETMASK
-read -p "Enter the gateway (e.g., 192.168.1.1): " GATEWAY
+#read -p "Enter the name of the physical interface to bridge (e.g., eth0): " NIC
+#read -p "Enter the IP address you wish to assign to the bridge (e.g., 192.168.1.100): " IP
+#read -p "Enter the netmask (e.g., 255.255.255.0): " NETMASK
+#read -p "Enter the gateway (e.g., 192.168.1.1): " GATEWAY
+
+# Detect Ips info directly from server 
+IFACE=$(ip route show default | awk '{print $5}')
+
+IP_NET=$(ip -4 addr show $IFACE | grep inet | grep -v '127.0.0.1' | awk '{print $2}')
+
+IP=$(ip -4 addr show eth0 | grep inet | awk '{print $2}' | cut -d'/' -f1)
+
+NETMASK=$(ifconfig $IFACE | grep netmask | awk '{print $4}')
+
+GW=$(ip route show default | awk '{print $3}')
 
 # Check if ipcalc is installed
 if ! command -v ipcalc >/dev/null; then
@@ -43,14 +54,14 @@ fi
 IPV6_ADDR=""
 IPV6_GW=""
 
-IPV6=$(ip -6 addr show dev $NIC  scope global | sed -e '1d;3d' | awk '{print $2; exit}')
+IPV6=$(ip -6 addr show dev eth0 scope global | grep -w inet6  | awk '{print $2}')
  [[ -n "$IPV6" ]] && IPV6_ADDR=$IPV6
 
 
 IPV6_GW=$(ip -6 route | awk '/default via/ {print $3; exit}')
 
 # Check if interface exists:
-if ! ip link show "$NIC" >/dev/null 2>&1; then
+if ! ip link show "$IFACE" >/dev/null 2>&1; then
     echo -e "${RED}[ERROR] Interface $NIC not found.${NC}"
     exit 1
 fi
@@ -72,7 +83,7 @@ echo -e "${GREEN}[INFO] Detected ISP: ${ISP:-Unknown}.${NC}"
 CIDR=$(ipcalc $IP $NETMASK | awk '/Netmask/ {print $4}')
 
 # Fetecting mac address
-MAC=$(cat /sys/class/net/$NIC/address)
+MAC=$(cat /sys/class/net/$IFACE/address)
 #MAC=$(ifconfig $IFACE | grep ether | awk '{print $2}')
 
 
@@ -95,15 +106,15 @@ network:
   version: 2
   renderer: networkd
   ethernets:
-    $NIC:
+    $IFACE:
       dhcp4: no
   bridges:
     viifbr0:
       addresses:
-        - $IP/$CIDR
+        - $IP_NET
         ${IPV6_ADDR:+- $IPV6_ADDR}
-      interfaces: [ $NIC ]
-      gateway4: $GATEWAY
+      interfaces: [ $IFACE ]
+      gateway4: $GW
       ${IPV6_GW:+gateway6: $IPV6_GW}
       macaddress: $MAC
       nameservers:
@@ -119,23 +130,35 @@ EOF
 
 # OVH/Hetzner netplan
 ovh_hetzner_netplan() {
+
+echo -e "${BLUE}[INFO] Starting Netplan bridge configuration...${NC}"
+
+# considering the server don't have multiples .yamls file
+NETPLAN=$(ls /etc/netplan/ | head -n1)
+
+# create backup of .yaml
+cp /etc/netplan/$NETPLAN /etc/netplan/$NETPLAN-bak
+
+read -p "Your server is belong to $ISP so you need to mention the server netmask which is on $ISP panel" CIDR
+
+
 tee /etc/netplan/$NETPLAN <<EOF
 network:
   version: 2
   renderer: networkd
   ethernets:
-    $NIC:
+    $IFACE:
       dhcp4: no
   bridges:
     viifbr0:
       addresses:
         - $IP/$CIDR
         ${IPV6_ADDR:+- $IPV6_ADDR}
-      interfaces: [ $NIC ]
+      interfaces: [ $IFACE ]
       routes:
         - on-link: true
           to: 0.0.0.0/0
-          via: $GATEWAY
+          via: $GW
       ${IPV6_GW:+gateway6: $IPV6_GW}
       macaddress: $MAC
       nameservers:
@@ -152,12 +175,12 @@ EOF
 # Redhat based linux OS setup
 setup_bridge_rhel() {
 
-    CON_NAME=$(nmcli -t -f NAME,DEVICE connection show | grep ":$NIC" | cut -d: -f1)
+    CON_NAME=$(nmcli -t -f NAME,DEVICE connection show | grep ":$IFACE" | cut -d: -f1)
 
     #CIDR_2=$(ipcalc -p $IP $NETMASK | awk -F= {'print $2'})
 
     nmcli connection add type bridge con-name viifbr0 ifname viifbr0 autoconnect yes
-    nmcli connection modify viifbr0 ipv4.addresses $IP/$CIDR ipv4.gateway $GATEWAY ipv4.dns '8.8.8.8'  ipv4.method manual
+    nmcli connection modify viifbr0 ipv4.addresses $IP_NET ipv4.gateway $GW ipv4.dns '8.8.8.8'  ipv4.method manual
     if [[ -n "$IPV6_ADDR" ]]; then
     nmcli connection modify viifbr0 ipv6.addresses "$IPV6_ADDR" ipv6.gateway "$IPV6_GW" ipv6.method manual ipv6.dns "2001:4860:4860::8888"
 else
