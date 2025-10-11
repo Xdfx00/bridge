@@ -2,7 +2,6 @@
 
 **Author:** Aman Shaikh  
 **Version:** 2.0  
-**License:** MIT  
 **Supported OS:** Ubuntu, AlmaLinux, Rocky Linux, CentOS Stream  
 
 ---
