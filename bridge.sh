@@ -19,9 +19,6 @@ CYAN="\033[0;36m"
 BOLD="\033[1m"
 NC="\033[0m" # No Color
 
-# Log file 
-LOG_FILE=/var/log/viifbr0.log
-touch "$LOG_FILE" 2>/dev/null || LOG_FILE="/tmp/viifbr-setup.log"
 
 # Logging functions
 log() {
@@ -388,11 +385,10 @@ if ping -W 2 -c 3 "${TEST_HOST}" >/dev/null 2>&1; then
     echo ""
     echo -e "${GREEN}╔════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║                                                        ║${NC}"
-    echo -e "${GREEN}║  ✓ Bridge Configuration Successful!                   ║${NC}"
+    echo -e "${GREEN}║  ✓ Bridge Configuration Successful!                    ║${NC}"
     echo -e "${GREEN}║                                                        ║${NC}"
     echo -e "${GREEN}║  Bridge Name: viifbr0                                  ║${NC}"
-    echo -e "${GREEN}║  Interface: $IFACE${NC}"
-    echo -e "${GREEN}║  Log File: $LOG_FILE${NC}"
+    echo -e "${GREEN}║  Interface: $IFACE${BLUE}"
     echo -e "${GREEN}║                                                        ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${NC}"
   exit 0
@@ -422,8 +418,8 @@ then
   netplan apply
   ip link delete dev viifbr0
   rm -rf $BACKUP
-  log ERROR "Rolled back failed to previous configuration"
-  echo -e "${YELLOW}Please check the logs at $LOG_FILE and investigate the issue${NC}"
+  log SUCCESS "Rolled back failed to previous configuration"
+  echo -e "${YELLOW}Please investigate the issue${NC}"
   exit 2
 fi
 
@@ -436,7 +432,7 @@ then
   nmcli connection modify "${CON_NAME}" connection.master "" connection.slave-type ""
   nmcli connection up "${CON_NAME}"
   nmcli connection delete viifbr0
-  log ERROR "Rolled back failed to previous configuration"
-  echo -e "${YELLOW}Please check the logs at $LOG_FILE and investigate the issue${NC}"
+  log ERROR "Rolled back to previous configuration"
+  echo -e "${YELLOW}Please investigate the issue${NC}"
   exit 2
 fi
