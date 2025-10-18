@@ -26,7 +26,6 @@ log() {
   shift
   local message="$*"
   local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-  echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
 
   case "$level" in 
     INFO)     echo -e "${BLUE}ℹ ${NC} $message" ;;
