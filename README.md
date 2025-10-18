@@ -1,7 +1,7 @@
 # 🛠️ Linux Bridge Configuration Script
 
 **Author:** Aman Shaikh  
-**Version:** 2.0  
+**Version:** 2.1
 **Supported OS:** Ubuntu, AlmaLinux, Rocky Linux, CentOS Stream  
 
 ---
