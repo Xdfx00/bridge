@@ -1,8 +1,8 @@
 #!/bin/bash
 
 #
-# Author: Aman Shaikh
-# Version: 2.0
+# Author: Zod
+# Version: 2.1
 # Description: Interactive script to configure a Linux bridge on Ubuntu (Netplan)
 #              or AlmaLinux (nmcli), with ipcalc check and color-coded output.
 
@@ -15,14 +15,50 @@ RED="\033[0;31m"
 GREEN="\033[0;32m"
 YELLOW="\033[1;33m"
 BLUE="\033[1;34m"
+CYAN="\033[0;36m"
+BOLD="\033[1m"
 NC="\033[0m" # No Color
 
+# Log file 
+LOG_FILE=/var/log/viifbr0.log
+touch "$LOG_FILE" 2>/dev/null || LOG_FILE="/tmp/viifbr-setup.log"
 
-# Prompt user for network configuration
-echo -e "${BLUE}--- Linux Bridge Configuration ---${NC}"
+# Logging functions
+log() {
+  local level="$1"
+  shift
+  local message="$*"
+  local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+  echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
 
-# Detect Ips info directly from server 
+  case "$level" in 
+    INFO)     echo -e "${BLUE}ℹ ${NC} $message" ;;
+    SUCCESS)  echo -e "${GREEN}✓${NC} $message" ;;
+    WARN)     echo -e "${YELLO}"⚠ ${NC}   $message ;;
+    ERROR)   echo -e "${RED}✗${NC}  $message" ;;
+    STEP)    echo -e "\n${CYAN}${BOLD}▸ $message${NC}" ;;
+  esac
+}
+
+
+
+# Banner
+clear
+echo -e "${BOLD}${BLUE}"
+echo "╔════════════════════════════════════════════════════════╗"
+echo "║                                                        ║"
+echo "║        Linux Bridge Configuration Script              ║"
+echo "║              Network Bridge Setup                      ║"
+echo "║                                                        ║"
+echo "╚════════════════════════════════════════════════════════╝"
+echo -e "${NC}"
+log INFO "Script started by user: $(whoami)"
+
+
+
+# Detect Network Interface 
 IFACE=$(ip route show default | awk '{print $5}')
+log INFO "Defualt interface: $IFACE"
 
 IP_NET=$(ip -4 addr show $IFACE | grep inet | grep -v '127.0.0.1' | awk '{print $2}')
 
@@ -30,57 +66,95 @@ IP=$(ip -4 addr show $IFACE | grep inet | grep -v '127.0.0.1' | awk '{print $2}'
 
 GW=$(ip route show default | awk '{print $3}')
 
+log INFO "IPV4 addressh: $IP_NET"
+log INFO "GATEWAY: $GW"
+
+
 # Check if ipcalc is installed
+log INFO "Checking if ipcalc is installed"
 if ! command -v ipcalc >/dev/null; then
-    echo -e "${YELLOW}[INFO] ipcalc not found. Attempting to install...${NC}"
+    log WARN "ipcalc not found, attempting to install...."
+
+
     if grep -qi 'ubuntu' /etc/os-release; then
-        apt-get update -y >/dev/null 2>&1 && apt-get install -y ipcalc >/dev/null 2>&1 || { echo -e "${RED}[ERROR] Failed to install ipcalc on Ubuntu.${NC}"; exit 1; }
+        apt-get update -y >/dev/null 2>&1 && apt-get install -y ipcalc >/dev/null 2>&1 
+        if [[ $? = 0 ]]; then
+          log SUCCESS "ipcalc is successfully installed"
+        else
+          log ERROR "Failed to install ipcalc."
+          exit 1
+        fi
     elif [[ "$ID" == "almalinux" || "$ID" == "rocky" || "$ID" == "centos" ]]; then
-        dnf install -y ipcalc >/dev/null 2>&1 || { echo -e "${RED}[ERROR] Failed to install ipcalc on AlmaLinux.${NC}"; exit 1; }
+        dnf install -y ipcalc >/dev/null 2>&1
+        if [[ $? = 0  ]]; then
+          log SUCCESS "ipcalc is successfully install"
+          else
+            log ERROR "Failed to install ipcalc."
+            exit 1 
+        fi
+
     else
-        echo -e "${RED}[ERROR] Unsupported OS. Please install ipcalc manually.${NC}"
+        log ERROR "Unsupported OS. Please install ipcalc manually."
         exit 1
     fi
 fi
 
 
 # Checking IPv6
+log SETP "checking IPv6 configuration"
 IPV6_ADDR=""
 IPV6_GW=""
 
 IPV6=$(ip -6 addr show dev $IFACE scope global | grep -w inet6  | awk '{print $2}')
- [[ -n "$IPV6" ]] && IPV6_ADDR=$IPV6
-
-
-IPV6_GW=$(ip -6 route | awk '/default via/ {print $3; exit}')
+if [[ -n "$IPV6" ]]; then
+  IPV6_ADDR=$IPV6
+  IPV6_GW=$(ip -6 route | awk '/default via/ {print $3; exit}')
+  log INFO "IPV6 address: $IPV6"
+  log INFO "IPV6 gateway: $IPV6_GW"
+else
+  log WARN "No IPV6 found"
+fi
 
 # Check if interface exists:
 if ! ip link show "$IFACE" >/dev/null 2>&1; then
-    echo -e "${RED}[ERROR] Interface $IFACE not found.${NC}"
+    log ERROR "Interface $IFACE not found."
     exit 1
 fi
 
-# Checking if the server provider Hetzner or OVH
-DATA=$(curl -sS ipinfo.io/$IP)
+# Detecting if provider is OVH or Hetzner
+log STEP "Detecting server provider"
+DATA=$(curl -sS ipinfo.io/$IP 2>/dev/null)
 if echo "$DATA" | grep -q '"bogon": true'; then
-    echo -e "${YELLOW}[INFO] Private IP detected. Skipping ISP detection.${NC}"
+    log WARN "Private IP detected. Skipping ISP detection"
     ISP="private"
 else
     ISP=$(echo "$DATA" | grep -Eio "hetzner|ovh")
 fi
 
-echo -e "${GREEN}[INFO] Detected ISP: ${ISP:-Unknown}.${NC}"
+log INFO "Detected ISP: ${ISP:-Unknown}"
 
 
 # gathering correct netmask
 if [[ $ISP == "Hetzner" ]]
-then 
-	read -p "Your server is from $ISP so you need to provide the correct nastmask from hetnzer panel.! (eq.. 255.255.255.0)" NETMASK
+then
+  log STEP "Hetzner configuration required"
+
+  while true; do
+	read -p "Your server is from $ISP so you need to provide the correct nastmask from hetnzer panel.! (eq.. 255.255.255.0): " NETMASK
+  if [[ "$NETMASK" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]
+  then
 	CIDR=$(ipcalc $IP $NETMASK | awk '/Netmask/ {print $4}')
+  log INFO "Netmask: $Netmask (CIDR: /$CIDR)"
+  break
+else
+  log ERROR "Invalid netmask format. Please try again."
+  fi 
+done
+
 fi
 
 
-# Fetecting mac address
+# Get MAC address
 MAC=$(cat /sys/class/net/$IFACE/address)
 
 
@@ -88,16 +162,17 @@ MAC=$(cat /sys/class/net/$IFACE/address)
 # Ubuntu Bridge Setup using Netplan
 ###########################################
 setup_bridge_ubuntu() {
-echo -e "${BLUE}[INFO] Starting Netplan bridge configuration...${NC}"
+log STEP "Starting Ubuntu bridge with Netplan..."
 
 # considering the server don't have multiples .yamls file
 NETPLAN=$(ls /etc/netplan/ | head -n1)
 
 # create backup of .yaml
+log INFO "Backing up current netplan config: $NETPLAN"
 cp /etc/netplan/$NETPLAN /etc/netplan/$NETPLAN-bak
 
-
-tee /etc/netplan/$NETPLAN <<EOF
+log INFO "Creating new netplan configuration..."
+cat > /etc/netplan/$NETPLAN <<EOF
 network:
   version: 2
   renderer: networkd
@@ -119,23 +194,24 @@ network:
            - 8.8.4.4
 EOF
 
-    netplan generate
-    netplan apply
-    echo -e "${GREEN}[INFO] Applied Default Netplan config.${NC}"
+    netplan apply 2>/dev/null
+    log SUCCESS "Applied Default Netplan configuration.."
 }
 
 # OVH/Hetzner netplan
 hetzner_netplan() {
 
-echo -e "${BLUE}[INFO] Starting Netplan bridge configuration...${NC}"
+log STEP "Starting Ubuntu bridge with Netplan..."
 
 # considering the server don't have multiples .yamls file
 NETPLAN=$(ls /etc/netplan/ | head -n1)
 
 # create backup of .yaml
+log INFO "Backing up current netplan config: $NETPLAN"
 cp /etc/netplan/$NETPLAN /etc/netplan/$NETPLAN-bak
 
-tee /etc/netplan/$NETPLAN <<EOF
+log INFO "Creating new netplan configuration..."
+cat > /etc/netplan/$NETPLAN <<EOF
 network:
   version: 2
   renderer: networkd
@@ -159,25 +235,26 @@ network:
            - 8.8.8.8
            - 8.8.4.4
 EOF
-
-    netplan generate
-    netplan apply
-    echo -e "${GREEN}[INFO] Applied Hetzner Netplan config.${NC}"
+    
+    netplan apply 2>/dev/null
+    log SUCCESS "Applied Hetzner Netplan config"
 }
 
 
 
 ovh_netplan() {
 
-echo -e "${BLUE}[INFO] Starting Netplan bridge configuration...${NC}"
+log STEP "Starting Ubuntu bridge with Netplan..."
 
 # considering the server don't have multiples .yamls file
 NETPLAN=$(ls /etc/netplan/ | head -n1)
 
 # create backup of .yaml
+log INFO "Backing up current netplan config: $NETPLAN"
 cp /etc/netplan/$NETPLAN /etc/netplan/$NETPLAN-bak
 
-tee /etc/netplan/$NETPLAN <<EOF
+log INFO "Creating new netplan configuration..."
+cat > /etc/netplan/$NETPLAN <<EOF
 network:
   version: 2
   renderer: networkd
@@ -202,14 +279,14 @@ network:
            - 8.8.4.4
 EOF
 
-    netplan generate
-    netplan apply
-    echo -e "${GREEN}[INFO] Applied OVH/Hetzner Netplan config.${NC}"	
+    netplan apply 2>/dev/null
+    log SUCCESS "Applied OVH/Hetzner Netplan config.."	
 }
 
 
 # Redhat based linux OS setup
 setup_bridge_rhel() {
+  log STEP "Configuring RHEL-based Bridge with NetworkManager"
 
     CON_NAME=$(nmcli -t -f NAME,DEVICE connection show | grep ":$IFACE" | cut -d: -f1)
 
@@ -225,10 +302,11 @@ fi
     nmcli connection up viifbr0
     nmcli connection up "$CON_NAME"
 
-    echo -e "${GREEN}[INFO] Bridge created via nmcli config.${NC}"
+    log SUCCESS "Bridge created successfully via NetworkManager $ID:"
 }
 
 hetzner_rhel() {
+  log STEP "Configuring Hetzner RHEL Bridge with NetworkManager"
 
 	CON_NAME=$(nmcli -t -f NAME,DEVICE connection show | grep ":$IFACE" | cut -d: -f1)
 
@@ -243,6 +321,9 @@ else
 	nmcli connection modify viifbr0 connection.autoconnect-slaves 1
 	nmcli connection up viifbr0
 	nmcli connection up "$CON_NAME"
+
+  log SUCCESS "Hetzner bridge created successfully $ID:"
+
 }
 
 
@@ -251,7 +332,7 @@ else
 ###########################################
 if [[ "$ID" == "ubuntu" ]]
 then
-    echo -e "${BLUE}[INFO] Ubuntu detected.${NC}"
+  log INFO "Ubuntu detected"
   if [[ "$ISP" == "Hetzner" ]] 
   then
       hetzner_netplan
@@ -263,7 +344,7 @@ then
   fi
 elif [[ "$ID" == "almalinux" || "$ID" == "rocky" || "$ID" == "centos" ]]
 then
-    echo -e "${BLUE}[INFO] RHEL-based distro detected.${NC}"
+    log INFO "RHEL-based distribution detected: $ID"
     if [[ $ISP == "Hetzner" ]]
     then
 	    hetzner_rhel
@@ -271,6 +352,91 @@ then
 	    setup_bridge_rhel
     fi
 else
-    echo -e "${RED}[ERROR] Unsupported OS. This script supports only Ubuntu, AlmaLinux, Rockylinux, Centos stream.${NC}"
+   log ERROR "Unsupported OS: $ID"
+    echo -e "${RED}This script supports only Ubuntu, AlmaLinux, Rocky Linux, and CentOS Stream${NC}"
     exit 1
+fi
+
+
+
+
+##########################################################################################################
+
+#                                      ROLLBACK
+
+##########################################################################################################
+
+ROLLBACK_WAIT=${ROLLBACK_WAIT:-15}
+TEST_HOST=${TEST_HOST:-8.8.8.8}
+
+log STEP "Starting Connectivity Test (${ROLLBACK_WAIT}s)"
+echo ""
+echo -e "${YELLOW}⏳ Waiting ${ROLLBACK_WAIT} seconds before testing connectivity...${NC}"
+
+for ((i=$ROLLBACK_WAIT; i>0; i--)); do
+     printf "\r${CYAN}Time remaining: %2ds${NC}" $i
+     sleep 1
+done
+echo ""
+
+log INFO "Testing connectivity to $TEST_HOST"
+
+# connectivity test
+if ping -W 2 -c 3 "${TEST_HOST}" >/dev/null 2>&1; then
+  log SUCCESS "bridge is up and reachable vai $TEST_HOST"
+
+    echo ""
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║                                                        ║${NC}"
+    echo -e "${GREEN}║  ✓ Bridge Configuration Successful!                   ║${NC}"
+    echo -e "${GREEN}║                                                        ║${NC}"
+    echo -e "${GREEN}║  Bridge Name: viifbr0                                  ║${NC}"
+    echo -e "${GREEN}║  Interface: $IFACE${NC}"
+    echo -e "${GREEN}║  Log File: $LOG_FILE${NC}"
+    echo -e "${GREEN}║                                                        ║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${NC}"
+  exit 0
+fi
+
+log ERROR "Connectivity test failed, initiating rollback"
+
+    echo ""
+    echo -e "${RED}╔════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║  ⚠ CONNECTIVITY TEST FAILED                            ║${NC}"
+    echo -e "${RED}║  Rolling back to previous configuration...             ║${NC}"
+    echo -e "${RED}╚════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+# Ubuntu restore 
+
+if [[ "$ID" == "ubuntu" ]]
+then
+  BACKUP="/etc/netplan/${NETPLAN}-bak" 2>/dev/null
+    if [[ -z $BACKUP ]]
+      then 
+        log ERROR "No backup yaml found - cannot roll back"
+        exit 2 
+    fi
+  log INFO "Restoring $BACKUP → ${NETPLAN}"
+  cp --archive "$BACKUP" "/etc/netplan/${NETPLAN}"
+  netplan apply
+  ip link delete dev viifbr0
+  rm -rf $BACKUP
+  log ERROR "Rolled back failed to previous configuration"
+  echo -e "${YELLOW}Please check the logs at $LOG_FILE and investigate the issue${NC}"
+  exit 2
+fi
+
+
+# RHEL rollback
+if [[ "$ID" == "almalinux" || "$ID" == "rocky" || "$ID" == "centos" ]]
+then
+  log INFO "Rolling back NetworkManager configuration..."
+  nmcli connection down viifbr0
+  nmcli connection modify "${CON_NAME}" connection.master "" connection.slave-type ""
+  nmcli connection up "${CON_NAME}"
+  nmcli connection delete viifbr0
+  log ERROR "Rolled back failed to previous configuration"
+  echo -e "${YELLOW}Please check the logs at $LOG_FILE and investigate the issue${NC}"
+  exit 2
 fi
