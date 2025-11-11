@@ -431,7 +431,7 @@ then
   nmcli connection modify "${CON_NAME}" connection.master "" connection.slave-type ""
   nmcli connection up "${CON_NAME}"
   nmcli connection delete viifbr0
-  log ERROR "Rolled back to previous configuration"
+  log SUCCESS "Rolled backed to previous configuration"
   echo -e "${YELLOW}Please investigate the issue${NC}"
   exit 2
 fi
