@@ -417,7 +417,7 @@ then
   netplan apply
   ip link delete dev viifbr0
   rm -rf $BACKUP
-  log SUCCESS "Rolled back failed to previous configuration"
+  log SUCCESS "Rolled backed to previous configuration"
   echo -e "${YELLOW}Please investigate the issue${NC}"
   exit 2
 fi
